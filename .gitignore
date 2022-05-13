@@ -77,3 +77,6 @@ docs/book/*/book
 
 bindings/rust/wasmedge-sys/examples/.ipynb_checkpoints/*
 .DS_Store
+
+cbuild/
+examples/challenge/target/

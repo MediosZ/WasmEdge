@@ -6,6 +6,7 @@
 #include "common/types.h"
 #include "common/version.h"
 #include "host/wasi/wasimodule.h"
+#include "host/challenge/module.h"
 #include "plugin/plugin.h"
 #include "po/argument_parser.h"
 #include "vm/vm.h"
@@ -203,6 +204,10 @@ int main(int Argc, const char *Argv[]) {
   Conf.addHostRegistration(WasmEdge::HostRegistration::WasmEdge_Process);
   const auto InputPath = std::filesystem::absolute(SoName.value());
   WasmEdge::VM::VM VM(Conf);
+  
+  // add challenge module.
+  WasmEdge::Host::HostFuncChallengeModule ChallengeMod;
+  VM.registerModule(ChallengeMod);
 
   WasmEdge::Host::WasiModule *WasiMod =
       dynamic_cast<WasmEdge::Host::WasiModule *>(
