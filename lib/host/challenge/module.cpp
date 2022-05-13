@@ -15,6 +15,8 @@ HostFuncChallengeModule::HostFuncChallengeModule()
               std::make_unique<HostFuncChallengeSetClassName>(Env));
   addHostFunc("host_function_challenge_print",
               std::make_unique<HostFuncChallengePrint>(Env));
+  addHostFunc("host_function_challenge_cowsay",
+              std::make_unique<HostFuncChallengeCowsay>(Env));
 }
 
 } // namespace Host

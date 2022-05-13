@@ -7,7 +7,8 @@
 namespace WasmEdge {
 namespace Host {
 
-template <typename T> class HostFuncChallenge : public Runtime::HostFunction<T> {
+template <typename T>
+class HostFuncChallenge : public Runtime::HostFunction<T> {
 public:
   HostFuncChallenge(HostFuncChallengeEnvironment &HostEnv)
       : Runtime::HostFunction<T>(0), Env(HostEnv) {}

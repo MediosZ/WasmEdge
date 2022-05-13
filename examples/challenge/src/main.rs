@@ -8,6 +8,7 @@ pub mod challenge {
         pub fn host_function_challenge_add_student(student: *const c_char, len: u32) -> u32;
         pub fn host_function_challenge_set_class_name(name: *const c_char, len: u32);
         pub fn host_function_challenge_print();
+        pub fn host_function_challenge_cowsay(sentence: *const c_char, len: u32);
     }
 }
 
@@ -45,14 +46,16 @@ pub fn print() {
     }
 }
 
+pub fn cowsay<S: AsRef<str>>(sentence: S) {
+    let sentence = CString::new((sentence.as_ref()).as_bytes()).expect("");
+    unsafe {
+        challenge::host_function_challenge_cowsay(
+            sentence.as_ptr(),
+            sentence.as_bytes().len() as u32,
+        );
+    }
+}
+
 fn main() {
-    set_class_id(123);
-    set_class_name("WasmEdge");
-    let mut num: u32 = add_student("Alice");
-    println!("After adding Alice, num = {:?}", num);
-    num = add_student("Fred");
-    println!("After adding Fred, num = {:?}", num);
-    num = add_student("Terry");
-    println!("After adding Terry, num = {:?}", num);
-    print();
+    cowsay("How to do async wasm?");
 }
