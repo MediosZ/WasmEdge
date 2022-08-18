@@ -9,14 +9,14 @@ use crate::{
     },
     r#async::{AsyncResult, InnerAsyncResult},
     statistics::{InnerStat, Statistics},
-    store::{InnerStore, Store},
+    store::{AsyncState, InnerStore, Store},
     types::WasmEdgeString,
     utils::{self, check},
     Config, ImportObject, Instance, Module, WasiModule, WasmEdgeResult, WasmValue,
 };
 #[cfg(target_os = "linux")]
 use crate::{ffi::WasmEdge_HostRegistration_WasmEdge_Process, WasmEdgeProcessModule};
-use std::{collections::HashMap, path::Path};
+use std::{cell::UnsafeCell, collections::HashMap, path::Path, ptr};
 
 /// A [Vm] defines a virtual environment for managing WebAssembly programs.
 #[derive(Debug)]
@@ -394,12 +394,12 @@ impl Vm {
     /// If fail to run, then an error is returned.
     pub fn run_wasm_from_module(
         &mut self,
-        module: Module,
+        module: &Module,
         func_name: impl AsRef<str>,
         params: impl IntoIterator<Item = WasmValue>,
     ) -> WasmEdgeResult<Vec<WasmValue>> {
         // load
-        self.load_wasm_from_module(&module)?;
+        self.load_wasm_from_module(module)?;
 
         // validate
         self.validate()?;
@@ -831,6 +831,10 @@ impl Vm {
             false => Ok(Store {
                 inner: InnerStore(store_ctx),
                 registered: true,
+                async_state: Box::new(AsyncState {
+                    current_suspend: UnsafeCell::new(ptr::null()),
+                    current_poll_cx: UnsafeCell::new(ptr::null_mut()),
+                }),
             }),
         }
     }

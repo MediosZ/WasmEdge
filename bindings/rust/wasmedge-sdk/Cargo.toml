@@ -16,7 +16,8 @@ thiserror = "1.0.30"
 wasmedge-sys = {path = "../wasmedge-sys", version = "0.8"}
 wasmedge-types = {path = "../wasmedge-types", version = "0.2"}
 wat = "1.0"
-
+wasmtime-fiber = "0.39.1"
+tokio = {version = "1.20.1", features = ["full"]}
 [features]
 aot = []
 default = ["aot"]

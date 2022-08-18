@@ -7,12 +7,75 @@ use crate::{
     types::WasmEdgeString,
     WasmEdgeResult,
 };
+use std::{
+    cell::UnsafeCell,
+    future::Future,
+    pin::Pin,
+    ptr,
+    task::{Context, Poll},
+};
+
+struct Reset<T: Copy>(*mut T, T);
+
+impl<T: Copy> Drop for Reset<T> {
+    fn drop(&mut self) {
+        unsafe {
+            *self.0 = self.1;
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AsyncState {
+    pub current_suspend:
+        UnsafeCell<*const wasmtime_fiber::Suspend<Result<(), ()>, (), Result<(), ()>>>,
+    pub current_poll_cx: UnsafeCell<*mut Context<'static>>,
+}
+
+unsafe impl Send for AsyncState {}
+unsafe impl Sync for AsyncState {}
+
+#[derive(Debug)]
+pub struct AsyncCx {
+    pub current_suspend: *mut *const wasmtime_fiber::Suspend<Result<(), ()>, (), Result<(), ()>>,
+    current_poll_cx: *mut *mut Context<'static>,
+}
+
+impl AsyncCx {
+    pub unsafe fn block_on<U>(
+        &self,
+        mut future: Pin<&mut (dyn Future<Output = U> + Send)>,
+    ) -> Result<U, ()> {
+        let suspend = *self.current_suspend;
+        let _reset = Reset(self.current_suspend, suspend);
+        *self.current_suspend = ptr::null();
+        assert!(!suspend.is_null());
+
+        loop {
+            let future_result = {
+                let poll_cx = *self.current_poll_cx;
+                let _reset = Reset(self.current_poll_cx, poll_cx);
+                *self.current_poll_cx = ptr::null_mut();
+                assert!(!poll_cx.is_null());
+                future.as_mut().poll(&mut *poll_cx)
+            };
+
+            match future_result {
+                Poll::Ready(t) => break Ok(t),
+                Poll::Pending => {}
+            }
+            let res = (*suspend).suspend(());
+            res?;
+        }
+    }
+}
 
 /// A [Store] represents all global state that can be manipulated by WebAssembly programs. It consists of the runtime representation of all instances of [functions](crate::Function), [tables](crate::Table), [memories](crate::Memory), and [globals](crate::Global) that have been allocated during the life time of the [Vm](crate::Vm).
 #[derive(Debug)]
 pub struct Store {
     pub(crate) inner: InnerStore,
     pub(crate) registered: bool,
+    pub async_state: Box<AsyncState>,
 }
 impl Store {
     /// Creates a new [Store].
@@ -27,6 +90,10 @@ impl Store {
             false => Ok(Store {
                 inner: InnerStore(ctx),
                 registered: false,
+                async_state: Box::new(AsyncState {
+                    current_suspend: UnsafeCell::new(ptr::null()),
+                    current_poll_cx: UnsafeCell::new(ptr::null_mut()),
+                }),
             }),
         }
     }
@@ -98,6 +165,94 @@ impl Store {
         match self.module_names() {
             Some(names) => names.iter().any(|x| x == name.as_ref()),
             None => false,
+        }
+    }
+
+    pub fn async_cx(&self) -> Option<AsyncCx> {
+        let poll_cx_box_ptr = self.async_state.current_poll_cx.get();
+        if poll_cx_box_ptr.is_null() {
+            println!("ptr null");
+            return None;
+        }
+        let poll_cx_inner_ptr = unsafe { *poll_cx_box_ptr };
+        if poll_cx_inner_ptr.is_null() {
+            println!("inner ptr null");
+            return None;
+        }
+        Some(AsyncCx {
+            current_suspend: self.async_state.current_suspend.get(),
+            current_poll_cx: poll_cx_box_ptr,
+        })
+    }
+
+    pub async fn on_fiber<R>(
+        &mut self,
+        func: impl FnOnce(&mut Store) -> R + Send,
+    ) -> Result<R, ()> {
+        let mut slot = None;
+        let future = {
+            let current_poll_cx = self.async_state.current_poll_cx.get();
+            let current_suspend = self.async_state.current_suspend.get();
+
+            let stack = wasmtime_fiber::FiberStack::new(2 << 20).map_err(|_e| ())?;
+            let slot = &mut slot;
+            let fiber = wasmtime_fiber::Fiber::new(stack, move |keep_going, suspend| {
+                keep_going?;
+
+                unsafe {
+                    let _reset = Reset(current_suspend, *current_suspend);
+                    *current_suspend = suspend;
+                    *slot = Some(func(self));
+                    Ok(())
+                }
+            })
+            .map_err(|_e| ())?;
+
+            FiberFuture {
+                fiber,
+                current_poll_cx,
+                // engine,
+            }
+        };
+        future.await?;
+
+        return Ok(slot.unwrap());
+
+        struct FiberFuture<'a> {
+            fiber: wasmtime_fiber::Fiber<'a, Result<(), ()>, (), Result<(), ()>>,
+            current_poll_cx: *mut *mut Context<'static>,
+            // engine: Engine,
+        }
+
+        unsafe impl Send for FiberFuture<'_> {}
+
+        impl Future for FiberFuture<'_> {
+            type Output = Result<(), ()>;
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+                unsafe {
+                    let _reset = Reset(self.current_poll_cx, *self.current_poll_cx);
+                    *self.current_poll_cx =
+                        std::mem::transmute::<&mut Context<'_>, *mut Context<'static>>(cx);
+                    match self.fiber.resume(Ok(())) {
+                        Ok(result) => Poll::Ready(result),
+                        Err(()) => Poll::Pending,
+                    }
+                }
+            }
+        }
+
+        impl Drop for FiberFuture<'_> {
+            fn drop(&mut self) {
+                if !self.fiber.done() {
+                    let result = self.fiber.resume(Err(()));
+                    // This resumption with an error should always complete the
+                    // fiber. While it's technically possible for host code to catch
+                    // the trap and re-resume, we'd ideally like to signal that to
+                    // callers that they shouldn't be doing that.
+                    debug_assert!(result.is_ok());
+                }
+            }
         }
     }
 }

@@ -1,23 +1,28 @@
 // If the version of rust used is less than v1.63, please uncomment the follow attribute.
 // #![feature(explicit_generic_args_with_impl_trait)]
 
-use wasmedge_sdk::{params, Executor, ImportObjectBuilder, Module, Store};
-use wasmedge_sys::WasmValue;
+use wasmedge_sdk::{Executor, ImportObjectBuilder, Module, Store};
 use wasmedge_types::wat2wasm;
 
 #[cfg_attr(test, test)]
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     // We define a function to act as our "env" "say_hello" function imported in the
     // Wasm program above.
-    fn say_hello_world(_inputs: Vec<WasmValue>) -> Result<Vec<WasmValue>, u8> {
-        println!("Hello, world!");
 
-        Ok(vec![])
-    }
+    // create a store
+    let mut store = Store::new()?;
 
     // create an import module
     let import = ImportObjectBuilder::new()
-        .with_func::<(), ()>("say_hello", say_hello_world)?
+        .with_func_async::<(), ()>(&mut store, "say_hello", move |_caller, _params| {
+            Box::new(async {
+                println!("Hello, world!");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                println!("Hello, world after sleep!");
+                Ok(vec![])
+            })
+        })?
         .build("env")?;
 
     let wasm_bytes = wat2wasm(
@@ -44,9 +49,6 @@ fn main() -> anyhow::Result<()> {
     // create an executor
     let mut executor = Executor::new(None, None)?;
 
-    // create a store
-    let mut store = Store::new()?;
-
     // register the module into the store
     store.register_import_module(&mut executor, &import)?;
 
@@ -59,7 +61,13 @@ fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::Error::msg("Not found exported function named 'run'."))?;
 
     // run host function
-    run.call(&mut executor, params!())?;
-
+    let handle = tokio::spawn(async move {
+        let _ = run.call_async(&mut store, &mut executor, vec![]).await;
+        println!("run done");
+    });
+    // run.call_async(&mut store, &mut executor, vec![]).await;
+    // tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    println!("running ...");
+    handle.await?;
     Ok(())
 }

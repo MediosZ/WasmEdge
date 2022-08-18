@@ -1,4 +1,5 @@
-use crate::{io::WasmValTypeList, Global, Memory, Table, WasmEdgeResult};
+use crate::{io::WasmValTypeList, Global, Memory, Store, Table, WasmEdgeResult};
+use std::{future::Future, pin::Pin};
 use wasmedge_sys::{self as sys, ImportInstance, WasmValue};
 use wasmedge_types::FuncType;
 
@@ -106,8 +107,12 @@ impl ImportObjectBuilder {
     /// If fail to create or add the [host function](crate::Func), then an error is returned.
     pub fn with_func<Args, Rets>(
         mut self,
+        store: &mut Store,
         name: impl AsRef<str>,
-        real_func: impl Fn(Vec<WasmValue>) -> Result<Vec<WasmValue>, u8> + Send + Sync + 'static,
+        real_func: impl Fn(&mut sys::Store, Vec<WasmValue>) -> Result<Vec<WasmValue>, u8>
+            + Send
+            + Sync
+            + 'static,
     ) -> WasmEdgeResult<Self>
     where
         Args: WasmValTypeList,
@@ -117,9 +122,36 @@ impl ImportObjectBuilder {
         let args = Args::wasm_types();
         let returns = Rets::wasm_types();
         let ty = FuncType::new(Some(args.to_vec()), Some(returns.to_vec()));
-        let inner_func = sys::Function::create(&ty.into(), boxed_func, 0)?;
+        let inner_func = sys::Function::create(&mut store.inner, &ty.into(), boxed_func, 0)?;
         self.funcs.push((name.as_ref().to_owned(), inner_func));
         Ok(self)
+    }
+
+    pub fn with_func_async<Args, Rets>(
+        self,
+        store: &mut Store,
+        name: impl AsRef<str>,
+        real_func: impl Fn(
+                &mut sys::Store,
+                Vec<WasmValue>,
+            ) -> Box<dyn Future<Output = Result<Vec<WasmValue>, u8>> + Send>
+            + Send
+            + Sync
+            + 'static,
+    ) -> WasmEdgeResult<Self>
+    where
+        Args: WasmValTypeList,
+        Rets: WasmValTypeList,
+    {
+        self.with_func::<Args, Rets>(store, name, move |store, args| {
+            let async_cx = store.async_cx().expect("cannot get a async cx");
+            let mut future = Pin::from(real_func(store, args));
+            match unsafe { async_cx.block_on(future.as_mut()) } {
+                Ok(Ok(ret)) => Ok(ret),
+                Ok(Err(err)) => Err(err),
+                Err(_err) => Err(0),
+            }
+        })
     }
 
     /// Adds a [host function](crate::Func) to the [ImportObject] to create.
@@ -137,8 +169,9 @@ impl ImportObjectBuilder {
     /// If fail to create or add the [host function](crate::Func), then an error is returned.
     pub fn with_func_single_thread<Args, Rets>(
         mut self,
+        store: &mut Store,
         name: impl AsRef<str>,
-        real_func: impl Fn(Vec<WasmValue>) -> Result<Vec<WasmValue>, u8> + 'static,
+        real_func: impl Fn(&mut sys::Store, Vec<WasmValue>) -> Result<Vec<WasmValue>, u8> + 'static,
     ) -> WasmEdgeResult<Self>
     where
         Args: WasmValTypeList,
@@ -148,9 +181,37 @@ impl ImportObjectBuilder {
         let args = Args::wasm_types();
         let returns = Rets::wasm_types();
         let ty = FuncType::new(Some(args.to_vec()), Some(returns.to_vec()));
-        let inner_func = sys::Function::create_single_thread(&ty.into(), boxed_func, 0)?;
+        let inner_func =
+            sys::Function::create_single_thread(&mut store.inner, &ty.into(), boxed_func, 0)?;
         self.funcs.push((name.as_ref().to_owned(), inner_func));
         Ok(self)
+    }
+
+    pub fn with_func_single_async<Args, Rets>(
+        self,
+        store: &mut Store,
+        name: impl AsRef<str>,
+        real_func: impl Fn(
+                &mut sys::Store,
+                Vec<WasmValue>,
+            ) -> Box<dyn Future<Output = Result<Vec<WasmValue>, u8>> + Send>
+            + Send
+            + Sync
+            + 'static,
+    ) -> WasmEdgeResult<Self>
+    where
+        Args: WasmValTypeList,
+        Rets: WasmValTypeList,
+    {
+        self.with_func_single_thread::<Args, Rets>(store, name, move |store, args| {
+            let async_cx = store.async_cx().expect("cannot get a async cx");
+            let mut future = Pin::from(real_func(store, args));
+            match unsafe { async_cx.block_on(future.as_mut()) } {
+                Ok(Ok(ret)) => Ok(ret),
+                Ok(Err(err)) => Err(err),
+                Err(_err) => Err(0),
+            }
+        })
     }
 
     /// Adds a [global](crate::Global) to the [ImportObject] to create.

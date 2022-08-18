@@ -1,5 +1,6 @@
 //! Defines Func, SignatureBuilder, and Signature structs.
-use crate::{io::WasmValTypeList, Engine, WasmEdgeResult};
+use crate::{io::WasmValTypeList, Engine, Store, WasmEdgeResult};
+use std::{future::Future, pin::Pin};
 use wasmedge_sys::{self as sys, WasmValue};
 use wasmedge_types::{FuncType, ValType};
 
@@ -76,7 +77,11 @@ impl Func {
     ///
     /// If fail to create the host function, then an error is returned.
     pub fn wrap<Args, Rets>(
-        real_func: impl Fn(Vec<WasmValue>) -> Result<Vec<WasmValue>, u8> + Send + Sync + 'static,
+        store: &mut Store,
+        real_func: impl Fn(&mut sys::Store, Vec<WasmValue>) -> Result<Vec<WasmValue>, u8>
+            + Send
+            + Sync
+            + 'static,
     ) -> WasmEdgeResult<Self>
     where
         Args: WasmValTypeList,
@@ -86,11 +91,36 @@ impl Func {
         let args = Args::wasm_types();
         let returns = Rets::wasm_types();
         let ty = FuncType::new(Some(args.to_vec()), Some(returns.to_vec()));
-        let inner = sys::Function::create(&ty.into(), boxed_func, 0)?;
+        let inner = sys::Function::create(&mut store.inner, &ty.into(), boxed_func, 0)?;
         Ok(Self {
             inner,
             name: None,
             mod_name: None,
+        })
+    }
+
+    pub fn wrap_async<Args, Rets>(
+        store: &mut Store,
+        real_func: impl Fn(
+                &mut sys::Store,
+                Vec<WasmValue>,
+            ) -> Box<dyn Future<Output = Result<Vec<WasmValue>, u8>> + Send>
+            + Send
+            + Sync
+            + 'static,
+    ) -> WasmEdgeResult<Self>
+    where
+        Args: WasmValTypeList,
+        Rets: WasmValTypeList,
+    {
+        Self::wrap::<Args, Rets>(store, move |store, args| {
+            let async_cx = store.async_cx().expect("cannot get a async cx");
+            let mut future = Pin::from(real_func(store, args));
+            match unsafe { async_cx.block_on(future.as_mut()) } {
+                Ok(Ok(ret)) => Ok(ret),
+                Ok(Err(err)) => Err(err),
+                Err(_err) => Err(0),
+            }
         })
     }
 
@@ -106,7 +136,8 @@ impl Func {
     ///
     /// If fail to create the host function, then an error is returned.
     pub fn wrap_single_thread<Args, Rets>(
-        real_func: impl Fn(Vec<WasmValue>) -> Result<Vec<WasmValue>, u8> + 'static,
+        store: &mut Store,
+        real_func: impl Fn(&mut sys::Store, Vec<WasmValue>) -> Result<Vec<WasmValue>, u8> + 'static,
     ) -> WasmEdgeResult<Self>
     where
         Args: WasmValTypeList,
@@ -116,7 +147,8 @@ impl Func {
         let args = Args::wasm_types();
         let returns = Rets::wasm_types();
         let ty = FuncType::new(Some(args.to_vec()), Some(returns.to_vec()));
-        let inner = sys::Function::create_single_thread(&ty.into(), boxed_func, 0)?;
+        let inner =
+            sys::Function::create_single_thread(&mut store.inner, &ty.into(), boxed_func, 0)?;
         Ok(Self {
             inner,
             name: None,
@@ -172,10 +204,24 @@ impl Func {
     ///
     pub fn call<E: Engine>(
         &self,
+        _store: &Store,
         engine: &mut E,
         args: impl IntoIterator<Item = WasmValue>,
     ) -> WasmEdgeResult<Vec<WasmValue>> {
         engine.run_func(self, args)
+    }
+
+    pub async fn call_async<E: Engine + Send>(
+        &self,
+        store: &mut Store,
+        engine: &mut E,
+        args: impl IntoIterator<Item = WasmValue> + Send,
+    ) -> WasmEdgeResult<Vec<WasmValue>> {
+        store
+            .inner
+            .on_fiber(|_store| engine.run_func(self, args))
+            .await
+            .unwrap()
     }
 }
 

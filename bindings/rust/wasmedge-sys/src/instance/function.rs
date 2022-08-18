@@ -2,7 +2,8 @@
 
 use crate::{
     error::{FuncError, WasmEdgeError},
-    ffi, BoxedFn, BoxedFnSingle, Engine, WasmEdgeResult, WasmValue, HOST_FUNCS, HOST_FUNCS_SINGLE,
+    ffi, BoxedFn, BoxedFnSingle, Engine, Store, WasmEdgeResult, WasmValue, HOST_FUNCS,
+    HOST_FUNCS_SINGLE,
 };
 use core::ffi::c_void;
 use rand::Rng;
@@ -12,7 +13,7 @@ use wasmedge_types::ValType;
 // Wrapper function for thread-safe scenarios.
 extern "C" fn wraper_fn(
     key_ptr: *mut c_void,
-    _data: *mut c_void,
+    data: *mut c_void,
     _mem_cxt: *mut ffi::WasmEdge_MemoryInstanceContext,
     params: *const ffi::WasmEdge_Value,
     param_len: u32,
@@ -37,13 +38,13 @@ extern "C" fn wraper_fn(
         .try_into()
         .expect("len of returns should not greater than usize");
     let raw_returns = unsafe { std::slice::from_raw_parts_mut(returns, return_len) };
-
+    let mut store = unsafe { (data as *mut Store).as_mut().unwrap() };
     let result = {
         let host_functions = HOST_FUNCS.lock().expect("[wasmedge-sys] try lock failed.");
         let real_fn = host_functions
             .get(&key)
             .expect("host function should be there");
-        real_fn(input)
+        real_fn(&mut store, input)
     };
 
     match result {
@@ -61,7 +62,7 @@ extern "C" fn wraper_fn(
 // Wrapper function for single-threaded scenarios.
 extern "C" fn wraper_fn_single(
     key_ptr: *mut c_void,
-    _data: *mut c_void,
+    data: *mut c_void,
     _mem_cxt: *mut ffi::WasmEdge_MemoryInstanceContext,
     params: *const ffi::WasmEdge_Value,
     param_len: u32,
@@ -87,13 +88,13 @@ extern "C" fn wraper_fn_single(
         .try_into()
         .expect("len of returns should not greater than usize");
     let raw_returns = unsafe { std::slice::from_raw_parts_mut(returns, return_len) };
-
+    let mut store = unsafe { Box::from_raw(data as *mut Store) };
     HOST_FUNCS_SINGLE.with(|f| {
         let host_functions = f.borrow();
         let real_fn = host_functions
             .get(&key)
             .expect("host function should be there");
-        result = real_fn(input);
+        result = real_fn(&mut store, input);
     });
 
     match result {
@@ -183,7 +184,12 @@ impl Function {
     /// // create a Function instance
     /// let func = Function::create(&func_ty, Box::new(real_add), 0).expect("fail to create a Function instance");
     /// ```
-    pub fn create(ty: &FuncType, real_fn: BoxedFn, cost: u64) -> WasmEdgeResult<Self> {
+    pub fn create(
+        store: &mut Store,
+        ty: &FuncType,
+        real_fn: BoxedFn,
+        cost: u64,
+    ) -> WasmEdgeResult<Self> {
         let mut host_functions = HOST_FUNCS.lock().expect("[wasmedge-sys] try lock failed.");
         if host_functions.len() >= host_functions.capacity() {
             return Err(WasmEdgeError::Func(FuncError::CreateBinding(format!(
@@ -205,7 +211,7 @@ impl Function {
                 ty.inner.0,
                 Some(wraper_fn),
                 key as *const usize as *mut c_void,
-                std::ptr::null_mut(),
+                (store as *mut Store).cast(),
                 cost,
             )
         };
@@ -236,6 +242,7 @@ impl Function {
     /// If fail to create a [Function], then an error is returned.
     ///
     pub fn create_single_thread(
+        store: &mut Store,
         ty: &FuncType,
         real_fn: BoxedFnSingle,
         cost: u64,
@@ -267,7 +274,7 @@ impl Function {
                 ty.inner.0,
                 Some(wraper_fn_single),
                 key as *const usize as *mut c_void,
-                std::ptr::null_mut(),
+                (store as *mut Store).cast(),
                 cost,
             )
         };

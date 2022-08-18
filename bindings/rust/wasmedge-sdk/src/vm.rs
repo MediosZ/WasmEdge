@@ -340,7 +340,7 @@ impl Vm {
         args: impl IntoIterator<Item = sys::WasmValue>,
     ) -> WasmEdgeResult<Vec<sys::WasmValue>> {
         self.inner
-            .run_wasm_from_module(module.inner, func_name.as_ref(), args)
+            .run_wasm_from_module(&module.inner, func_name.as_ref(), args)
     }
 
     /// Returns the count of the named [module instances](crate::Instance) in this [store](crate::Store).
