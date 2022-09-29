@@ -7,14 +7,13 @@ use crate::{
 };
 use core::ffi::c_void;
 use rand::Rng;
-use std::convert::TryInto;
+use std::{convert::TryInto, future::Future, pin::Pin};
 use wasmedge_types::ValType;
-
 // Wrapper function for thread-safe scenarios.
 extern "C" fn wraper_fn(
     key_ptr: *mut c_void,
     data: *mut c_void,
-    _mem_cxt: *mut ffi::WasmEdge_MemoryInstanceContext,
+    _mem_cxt: *const ffi::WasmEdge_CallingFrameContext,
     params: *const ffi::WasmEdge_Value,
     param_len: u32,
     returns: *mut ffi::WasmEdge_Value,
@@ -55,7 +54,7 @@ extern "C" fn wraper_fn(
             }
             ffi::WasmEdge_Result { Code: 0 }
         }
-        Err(c) => ffi::WasmEdge_Result { Code: c as u8 },
+        Err(c) => ffi::WasmEdge_Result { Code: c as u32 },
     }
 }
 
@@ -63,7 +62,7 @@ extern "C" fn wraper_fn(
 extern "C" fn wraper_fn_single(
     key_ptr: *mut c_void,
     data: *mut c_void,
-    _mem_cxt: *mut ffi::WasmEdge_MemoryInstanceContext,
+    _mem_cxt: *const ffi::WasmEdge_CallingFrameContext,
     params: *const ffi::WasmEdge_Value,
     param_len: u32,
     returns: *mut ffi::WasmEdge_Value,
@@ -105,7 +104,7 @@ extern "C" fn wraper_fn_single(
             }
             ffi::WasmEdge_Result { Code: 0 }
         }
-        Err(c) => ffi::WasmEdge_Result { Code: c as u8 },
+        Err(c) => ffi::WasmEdge_Result { Code: c as u32 },
     }
 }
 
@@ -223,6 +222,33 @@ impl Function {
                 registered: false,
             }),
         }
+    }
+    pub fn create_async(
+        store: &mut Store,
+        ty: &FuncType,
+        real_fn: impl Fn(
+                &mut Store,
+                Vec<WasmValue>,
+            ) -> Box<dyn Future<Output = Result<Vec<WasmValue>, u8>> + Send>
+            + Send
+            + Sync
+            + 'static,
+        cost: u64,
+    ) -> WasmEdgeResult<Self> {
+        Self::create(
+            store,
+            ty,
+            Box::new(move |store, args| {
+                let async_cx = store.async_cx().expect("cannot get a async cx");
+                let mut future = Pin::from(real_fn(store, args));
+                match unsafe { async_cx.block_on(future.as_mut()) } {
+                    Ok(Ok(ret)) => Ok(ret),
+                    Ok(Err(err)) => Err(err),
+                    Err(_err) => Err(0x87),
+                }
+            }),
+            cost,
+        )
     }
 
     /// Creates a [host function](crate::Function) with the given function type.
@@ -378,6 +404,17 @@ impl Function {
         args: impl IntoIterator<Item = WasmValue>,
     ) -> WasmEdgeResult<Vec<WasmValue>> {
         engine.run_func(self, args)
+    }
+    pub async fn call_async<E: Engine + Send>(
+        &self,
+        store: &mut Store,
+        engine: &mut E,
+        args: impl IntoIterator<Item = WasmValue> + Send,
+    ) -> WasmEdgeResult<Vec<WasmValue>> {
+        store
+            .on_fiber(|_store| engine.run_func(self, args))
+            .await
+            .unwrap()
     }
 
     /// Returns a reference to this [Function] instance.

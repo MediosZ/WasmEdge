@@ -216,6 +216,8 @@ pub use validator::Validator;
 #[doc(inline)]
 pub use vm::Vm;
 
+mod async_env;
+
 use wasmedge_types::{error, WasmEdgeResult};
 
 /// Type alias for a boxed native function. This type is used in thread-safe cases.

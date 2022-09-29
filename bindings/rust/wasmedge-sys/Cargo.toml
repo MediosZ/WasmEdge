@@ -24,6 +24,9 @@ wasmtime-fiber = "0.39.1"
 bindgen = {version = "0.59.1", default-features = false, features = ["runtime"]}
 cmake = "0.1"
 
+[dev-dependencies]
+tokio = {version = "1.20.1", features = ["full"]}
+
 [features]
 aot = []
 default = ["aot"]

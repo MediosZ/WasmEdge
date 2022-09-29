@@ -149,7 +149,7 @@ impl ImportObjectBuilder {
             match unsafe { async_cx.block_on(future.as_mut()) } {
                 Ok(Ok(ret)) => Ok(ret),
                 Ok(Err(err)) => Err(err),
-                Err(_err) => Err(0),
+                Err(_err) => Err(0x87),
             }
         })
     }

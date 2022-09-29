@@ -4,6 +4,18 @@
 use wasmedge_sdk::{Executor, ImportObjectBuilder, Module, Store};
 use wasmedge_types::wat2wasm;
 
+struct Temp {}
+impl Drop for Temp {
+    fn drop(&mut self) {
+        println!("drop temp");
+    }
+}
+impl Temp {
+    fn dummy(&self) {
+        println!("123");
+    }
+}
+
 #[cfg_attr(test, test)]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,8 +30,21 @@ async fn main() -> anyhow::Result<()> {
         .with_func_async::<(), ()>(&mut store, "say_hello", move |_caller, _params| {
             Box::new(async {
                 println!("Hello, world!");
+                let temp = Temp {};
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                let (tx, rx) = tokio::sync::oneshot::channel::<i32>();
+                // tx.send(()).unwrap();
+
+                // Wrap the future with a `Timeout` set to expire in 10 milliseconds.
+                // if let Err(_) = tokio::time::timeout(std::time::Duration::from_millis(100), async {
+                //     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                // })
+                // .await
+                // {
+                //     println!("did not receive value within 100 ms");
+                // }
                 println!("Hello, world after sleep!");
+                temp.dummy();
                 Ok(vec![])
             })
         })?
@@ -37,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
     
       ;; Finally we create an entrypoint that calls our imported function.
       (func $run (type $no_args_no_rets_t)
+      (call $say_hello)
         (call $say_hello))
       ;; And mark it as an exported function named "run".
       (export "run" (func $run)))
@@ -61,13 +87,20 @@ async fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::Error::msg("Not found exported function named 'run'."))?;
 
     // run host function
-    let handle = tokio::spawn(async move {
-        let _ = run.call_async(&mut store, &mut executor, vec![]).await;
-        println!("run done");
-    });
-    // run.call_async(&mut store, &mut executor, vec![]).await;
+    // let handle = tokio::spawn(async move {
+    //     let _ = run.call_async(&mut store, &mut executor, vec![]).await;
+    //     println!("run done");
+    // });
+    if let Err(_) = tokio::time::timeout(
+        std::time::Duration::from_millis(10000),
+        run.call_async(&mut store, &mut executor, vec![]),
+    )
+    .await
+    {
+        println!("cancel future");
+    }
     // tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     println!("running ...");
-    handle.await?;
+    // handle.await?;
     Ok(())
 }

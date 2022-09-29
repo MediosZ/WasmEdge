@@ -1,6 +1,7 @@
 //! Defines WasmEdge Store struct.
 
 use crate::{
+    async_env::{FiberFuture, Reset},
     error::{StoreError, WasmEdgeError},
     ffi,
     instance::module::{InnerInstance, Instance},
@@ -14,16 +15,6 @@ use std::{
     ptr,
     task::{Context, Poll},
 };
-
-struct Reset<T: Copy>(*mut T, T);
-
-impl<T: Copy> Drop for Reset<T> {
-    fn drop(&mut self) {
-        unsafe {
-            *self.0 = self.1;
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct AsyncState {
@@ -208,52 +199,11 @@ impl Store {
             })
             .map_err(|_e| ())?;
 
-            FiberFuture {
-                fiber,
-                current_poll_cx,
-                // engine,
-            }
+            FiberFuture::new(fiber, current_poll_cx)
         };
         future.await?;
 
         return Ok(slot.unwrap());
-
-        struct FiberFuture<'a> {
-            fiber: wasmtime_fiber::Fiber<'a, Result<(), ()>, (), Result<(), ()>>,
-            current_poll_cx: *mut *mut Context<'static>,
-            // engine: Engine,
-        }
-
-        unsafe impl Send for FiberFuture<'_> {}
-
-        impl Future for FiberFuture<'_> {
-            type Output = Result<(), ()>;
-
-            fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-                unsafe {
-                    let _reset = Reset(self.current_poll_cx, *self.current_poll_cx);
-                    *self.current_poll_cx =
-                        std::mem::transmute::<&mut Context<'_>, *mut Context<'static>>(cx);
-                    match self.fiber.resume(Ok(())) {
-                        Ok(result) => Poll::Ready(result),
-                        Err(()) => Poll::Pending,
-                    }
-                }
-            }
-        }
-
-        impl Drop for FiberFuture<'_> {
-            fn drop(&mut self) {
-                if !self.fiber.done() {
-                    let result = self.fiber.resume(Err(()));
-                    // This resumption with an error should always complete the
-                    // fiber. While it's technically possible for host code to catch
-                    // the trap and re-resume, we'd ideally like to signal that to
-                    // callers that they shouldn't be doing that.
-                    debug_assert!(result.is_ok());
-                }
-            }
-        }
     }
 }
 impl Drop for Store {
