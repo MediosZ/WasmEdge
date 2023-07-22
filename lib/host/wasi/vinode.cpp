@@ -352,6 +352,17 @@ VINode::sockOpen(__wasi_address_family_t SysDomain,
   }
 }
 
+WasiExpect<std::shared_ptr<VINode>> VINode::eventfd() {
+  if (auto Res = INode::eventfd(); unlikely(!Res)) {
+    return WasiUnexpect(Res);
+  } else {
+    __wasi_rights_t Rights = __WASI_RIGHTS_POLL_FD_READWRITE |
+                             __WASI_RIGHTS_FD_FDSTAT_SET_FLAGS |
+                             __WASI_RIGHTS_FD_READ | __WASI_RIGHTS_FD_WRITE;
+    return std::make_shared<VINode>(std::move(*Res), Rights, Rights);
+  }
+}
+
 WasiExpect<std::shared_ptr<VINode>>
 VINode::sockAccept(__wasi_fdflags_t FdFlags) {
   if (auto Res = Node.sockAccept(FdFlags); unlikely(!Res)) {

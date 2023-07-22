@@ -593,5 +593,13 @@ public:
                         uint32_t AddressPtr, uint32_t PortPtr);
 };
 
+class WasiEventfd : public Wasi<WasiEventfd> {
+public:
+  WasiEventfd(WASI::Environ &HostEnv) : Wasi(HostEnv) {}
+
+  Expect<uint32_t> body(const Runtime::CallingFrame &Frame,
+                        uint32_t /* Out */ RoFdPtr);
+};
+
 } // namespace Host
 } // namespace WasmEdge

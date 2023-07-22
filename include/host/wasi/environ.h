@@ -930,6 +930,18 @@ public:
     return generateRandomFdToNode(Node);
   }
 
+  WasiExpect<__wasi_fd_t> eventfd() noexcept {
+
+    std::shared_ptr<VINode> Node;
+    if (auto Res = VINode::eventfd(); unlikely(!Res)) {
+      return WasiUnexpect(Res);
+    } else {
+      Node = std::move(*Res);
+    }
+
+    return generateRandomFdToNode(Node);
+  }
+
   WasiExpect<void> sockBind(__wasi_fd_t Fd,
                             __wasi_address_family_t AddressFamily,
                             Span<const uint8_t> Address,

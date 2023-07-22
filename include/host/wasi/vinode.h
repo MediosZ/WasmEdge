@@ -533,6 +533,8 @@ public:
   static WasiExpect<std::shared_ptr<VINode>>
   sockOpen(__wasi_address_family_t SysDomain, __wasi_sock_type_t SockType);
 
+  static WasiExpect<std::shared_ptr<VINode>> eventfd();
+
   WasiExpect<void> sockBind(__wasi_address_family_t AddressFamily,
                             Span<const uint8_t> Address,
                             uint16_t Port) noexcept {

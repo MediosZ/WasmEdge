@@ -39,6 +39,7 @@
 
 #if WASMEDGE_OS_LINUX
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #endif
 #if WASMEDGE_OS_MACOS
 #include <sys/event.h>
@@ -664,6 +665,8 @@ public:
 
   static WasiExpect<INode> sockOpen(__wasi_address_family_t SysDomain,
                                     __wasi_sock_type_t SockType) noexcept;
+
+  static WasiExpect<INode> eventfd() noexcept;
 
   WasiExpect<void> sockBind(__wasi_address_family_t AddressFamily,
                             Span<const uint8_t> Address,

@@ -1625,6 +1625,28 @@ Expect<uint32_t> WasiSockOpenV1::body(const Runtime::CallingFrame &Frame,
   return __WASI_ERRNO_SUCCESS;
 }
 
+Expect<uint32_t> WasiEventfd::body(const Runtime::CallingFrame &Frame,
+                                   uint32_t /* Out */ RoFdPtr) {
+  // Check memory instance from module.
+  auto *MemInst = Frame.getMemoryByIndex(0);
+  if (MemInst == nullptr) {
+    return __WASI_ERRNO_FAULT;
+  }
+
+  __wasi_fd_t *const RoFd = MemInst->getPointer<__wasi_fd_t *>(RoFdPtr);
+  if (RoFd == nullptr) {
+    return __WASI_ERRNO_FAULT;
+  }
+
+  if (auto Res = Env.eventfd(); unlikely(!Res)) {
+    return Res.error();
+  } else {
+    *RoFd = *Res;
+  }
+
+  return __WASI_ERRNO_SUCCESS;
+}
+
 Expect<uint32_t> WasiSockBindV1::body(const Runtime::CallingFrame &Frame,
                                       int32_t Fd, uint32_t AddressPtr,
                                       uint32_t Port) {

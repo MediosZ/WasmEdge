@@ -911,6 +911,16 @@ WasiExpect<INode> INode::sockOpen(__wasi_address_family_t AddressFamily,
   }
 }
 
+WasiExpect<INode> INode::eventfd() noexcept {
+  if (auto NewFd = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+      unlikely(NewFd < 0)) {
+    return WasiUnexpect(detail::fromErrNo(errno));
+  } else {
+    INode New(NewFd);
+    return New;
+  }
+}
+
 WasiExpect<void> INode::sockBind(__wasi_address_family_t AddressFamily,
                                  Span<const uint8_t> Address,
                                  uint16_t Port) noexcept {
